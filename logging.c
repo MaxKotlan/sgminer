@@ -15,6 +15,8 @@
 #include "logging.h"
 #include "miner.h"
 
+//#define DEV_DEBUG_MODE
+
 bool opt_debug = false;
 bool opt_debug_console = false;
 bool opt_verbose = false;
@@ -90,7 +92,7 @@ void _applog(int prio, const char *str, bool force)
   else {
 
 #ifdef DEV_DEBUG_MODE
-    if(prio == LOG_DEBUG) {
+    if(prio == LOG_DEBUG || prio == LOG_ERR) {
       __debug("", str);
     }
 #endif

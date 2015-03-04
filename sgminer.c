@@ -2263,14 +2263,20 @@ static bool gbt_decode(struct pool *pool, json_t *res_val)
 
 static bool getwork_decode(json_t *res_val, struct work *work)
 {
-  if (unlikely(!jobj_binary(res_val, "data", work->data, sizeof(work->data), true))) {
+  /*char *json_str = json_dumps(res_val, JSON_INDENT(2));
+  __debug("", "json strval = %s", json_str);
+  free(json_str);*/
+
+  size_t worklen = ((!safe_cmp(work->pool->algorithm.name, "zr5")) ? 80 : sizeof(work->data));
+
+  if (unlikely(!jobj_binary(res_val, "data", work->data, worklen, true))) {
     if (opt_morenotices)
       applog(LOG_ERR, "%s: JSON inval data", isnull(get_pool_name(work->pool), ""));
     return false;
   }
 
-  // Neoscrypt doesn't calc midstate
-  if (safe_cmp(work->pool->algorithm.name, "neoscrypt")) {
+  // Neoscrypt and ZR5 do not calc midstate
+  if ((safe_cmp(work->pool->algorithm.name, "neoscrypt") != 0) && (safe_cmp(work->pool->algorithm.name, "zr5") != 0)) {
     if (!jobj_binary(res_val, "midstate", work->midstate, sizeof(work->midstate), false)) {
       // Calculate it ourselves
       if (opt_morenotices) {
@@ -3024,7 +3030,7 @@ static bool submit_upstream_work(struct work *work, CURL *curl, char *curl_err_s
   endian_flip128(work->data, work->data);
 
   /* build hex string - Make sure to restrict to 80 bytes for Neoscrypt */
-  hexstr = bin2hex(work->data, ((!safe_cmp(work->pool->algorithm.name, "neoscrypt")) ? 80 : sizeof(work->data)));
+  hexstr = bin2hex(work->data, ((!safe_cmp(work->pool->algorithm.name, "neoscrypt") || !safe_cmp(work->pool->algorithm.name, "zr5")) ? 80 : sizeof(work->data)));
 
   /* build JSON-RPC request */
   if (work->gbt) {
@@ -7126,6 +7132,7 @@ bool submit_tested_work(struct thr_info *thr, struct work *work)
            thr->cgpu->device_id);
     return false;
   }
+
   work_out = copy_work(work);
   submit_work_async(work_out);
   return true;

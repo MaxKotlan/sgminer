@@ -1339,7 +1339,8 @@ static bool opencl_thread_init(struct thr_info *thr)
     return false;
   }
 
-  status |= clEnqueueWriteBuffer(clState->commandQueue, clState->outputBuffer, CL_TRUE, 0,
+  //[CLEANUP] -- blocking true?
+  status |= clEnqueueWriteBuffer(clState->commandQueue, clState->outputBuffer, false, 0,
                buffersize, blank_res, 0, NULL, NULL);
   if (unlikely(status != CL_SUCCESS)) {
     free(thrdata->res);
@@ -1430,7 +1431,8 @@ static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
       }
   }
 
-  status = clEnqueueReadBuffer(clState->commandQueue, clState->outputBuffer, CL_FALSE, 0,
+  //[CLEANUP] -- block true? - ends the command queue no need for clFinish later
+  status = clEnqueueReadBuffer(clState->commandQueue, clState->outputBuffer, true, 0,
              buffersize, thrdata->res, 0, NULL, NULL);
   if (unlikely(status != CL_SUCCESS)) {
     applog(LOG_ERR, "Error: clEnqueueReadBuffer failed error %d. (clEnqueueReadBuffer)", status);
@@ -1443,12 +1445,12 @@ static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
   work->blk.nonce += gpu->max_hashes;
 
   /* This finish flushes the readbuffer set with CL_FALSE in clEnqueueReadBuffer */
-  clFinish(clState->commandQueue);
+  //clFinish(clState->commandQueue);
 
   /* found entry is used as a counter to say how many nonces exist */
   if (thrdata->res[found]) {
     /* Clear the buffer again */
-    status = clEnqueueWriteBuffer(clState->commandQueue, clState->outputBuffer, CL_FALSE, 0,
+    status = clEnqueueWriteBuffer(clState->commandQueue, clState->outputBuffer, false, 0,
                 buffersize, blank_res, 0, NULL, NULL);
     if (unlikely(status != CL_SUCCESS)) {
       applog(LOG_ERR, "Error: clEnqueueWriteBuffer failed.");
@@ -1458,7 +1460,7 @@ static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
     postcalc_hash_async(thr, work, thrdata->res);
     memset(thrdata->res, 0, buffersize);
     /* This finish flushes the writebuffer set with CL_FALSE in clEnqueueWriteBuffer */
-    clFinish(clState->commandQueue);
+    //clFinish(clState->commandQueue);
   }
 
   return hashes;

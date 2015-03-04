@@ -31,8 +31,10 @@
 #include "algorithm/fresh.h"
 #include "algorithm/whirlcoin.h"
 #include "algorithm/neoscrypt.h"
+#include "algorithm/zr5.h"
 
 #include "compat.h"
+#include "util.h"
 
 #include <inttypes.h>
 #include <string.h>
@@ -52,7 +54,8 @@ const char *algorithm_type_str[] = {
   "NIST",
   "Fresh",
   "Whirlcoin",
-  "Neoscrypt"
+  "Neoscrypt",
+  "ZR5"
 };
 
 void sha256(const unsigned char *message, unsigned int len, unsigned char *digest)
@@ -630,6 +633,39 @@ static cl_int queue_whirlcoin_kernel(struct __clState *clState, struct _dev_blk_
   return status;
 }
 
+static cl_int queue_zr5_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __maybe_unused cl_uint threads)
+{
+  cl_kernel *kernel = &clState->kernel;
+  unsigned int num = 0;
+  cl_ulong le_target;
+  cl_int status = 0;
+
+  le_target = ((uint64_t *)blk->work->target)[3];
+
+  //getwork sends the data in th correct order already... stratum sends in reverse
+  if (blk->work->stratum) {
+    flip80(clState->cldata, blk->work->data);
+  }
+  else {
+    memcpy(clState->cldata, blk->work->data, 80);
+  }
+
+  status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, false, 0, 80, clState->cldata, 0, NULL,NULL);
+
+  CL_SET_ARG(clState->CLbuffer0);
+  CL_SET_ARG(clState->padbuffer8);
+
+  kernel = clState->extra_kernels;
+  num = 0;
+  CL_SET_ARG(clState->CLbuffer0);
+  CL_SET_ARG(clState->padbuffer8);
+  CL_SET_ARG(clState->outputBuffer);
+  CL_SET_ARG(le_target);
+
+  return status;
+}
+
+
 typedef struct _algorithm_settings_t {
   const char *name; /* Human-readable identifier */
   algorithm_type_t type; //common algorithm type
@@ -715,6 +751,8 @@ static algorithm_settings_t algos[] = {
 
   { "whirlcoin", ALGO_WHIRL, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 3, 8 * 16 * 4194304, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, whirlcoin_regenhash, queue_whirlcoin_kernel, sha256, NULL},
 
+  { "zr5", ALGO_ZR5, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 1,  8 * 16 * 4194304, 0, zr5_regenhash, queue_zr5_kernel, gen_hash, append_x11_compiler_options},
+
   // Terminator (do not remove)
   { NULL, ALGO_UNK, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL}
 };
@@ -786,6 +824,7 @@ static const char *lookup_algorithm_alias(const char *lookup_alias, uint8_t *nfa
   ALGO_ALIAS("nist5", "talkcoin-mod");
   ALGO_ALIAS("keccak", "maxcoin");
   ALGO_ALIAS("whirlpool", "whirlcoin");
+  ALGO_ALIAS("ziftrcoin", "zr5");
 
   #undef ALGO_ALIAS
   #undef ALGO_ALIAS_NF
