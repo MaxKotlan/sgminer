@@ -751,7 +751,7 @@ static algorithm_settings_t algos[] = {
 
   { "whirlcoin", ALGO_WHIRL, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 3, 8 * 16 * 4194304, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, whirlcoin_regenhash, queue_whirlcoin_kernel, sha256, NULL},
 
-  { "zr5", ALGO_ZR5, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 1,  8 * 16 * 4194304, 0, zr5_regenhash, queue_zr5_kernel, gen_hash, append_x11_compiler_options},
+  { "zr5", ALGO_ZR5, "", 1, 65536, 65536, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 1,  8 * 16 * 4194304, 0, zr5_regenhash, queue_zr5_kernel, gen_hash, append_x11_compiler_options},
 
   // Terminator (do not remove)
   { NULL, ALGO_UNK, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL}
