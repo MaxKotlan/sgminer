@@ -1215,6 +1215,7 @@ typedef struct _dev_blk_ctx {
   cl_uint oneA, twoA, threeA, fourA, fiveA, sixA, sevenA;
 
   struct work *work;
+  struct cgpu_info *cgpu;
 } dev_blk_ctx;
 
 struct curl_ent {

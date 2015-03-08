@@ -506,90 +506,100 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
          filename, clState->hasBitAlign ? "" : "out", build_data->patch_bfi ? "" : "un",
          algorithm->nfactor, algorithm->n);
 
-  /* get a kernel object handle for a kernel with the given name */
-  clState->kernel = clCreateKernel(clState->program, "search", &status);
-  if (status != CL_SUCCESS) {
-    applog(LOG_ERR, "Error %d: Creating Kernel from program. (clCreateKernel)", status);
-    return NULL;
-  }
-
-
-  clState->n_extra_kernels = algorithm->n_extra_kernels;
-  if (clState->n_extra_kernels > 0) {
-    unsigned int i;
-    char kernel_name[9]; // max: search99 + 0x0
-
-    clState->extra_kernels = (cl_kernel *)malloc(sizeof(cl_kernel) * clState->n_extra_kernels);
-
-    for (i = 0; i < clState->n_extra_kernels; i++) {
-      snprintf(kernel_name, 9, "%s%d", "search", i + 1);
-      clState->extra_kernels[i] = clCreateKernel(clState->program, kernel_name, &status);
-      if (status != CL_SUCCESS) {
-        applog(LOG_ERR, "Error %d: Creating ExtraKernel #%d from program. (clCreateKernel)", status, i);
-        return NULL;
-      }
-    }
-  }
-
-  size_t bufsize;
-  size_t readbufsize = 128;
-
-  if (algorithm->rw_buffer_size < 0) {
-    // calc buffer size for neoscrypt
-    if (!safe_cmp(algorithm->name, "neoscrypt")) {
-      /* The scratch/pad-buffer needs 32kBytes memory per thread. */
-      bufsize = NEOSCRYPT_SCRATCHBUF_SIZE * cgpu->thread_concurrency;
-
-      /* This is the input buffer. For neoscrypt this is guaranteed to be
-       * 80 bytes only. */
-      readbufsize = 80;
-
-      applog(LOG_DEBUG, "Neoscrypt buffer sizes: %lu RW, %lu R", (unsigned long)bufsize, (unsigned long)readbufsize);
-    // scrypt/n-scrypt
-    } else {
-      size_t ipt = (algorithm->n / cgpu->lookup_gap + (algorithm->n % cgpu->lookup_gap > 0));
-      bufsize = 128 * ipt * cgpu->thread_concurrency;
-      applog(LOG_DEBUG, "Scrypt buffer sizes: %lu RW, %lu R", (unsigned long)bufsize, (unsigned long)readbufsize);
-    }
-  } else {
-    bufsize = (size_t) algorithm->rw_buffer_size;
-    applog(LOG_DEBUG, "Buffer sizes: %lu RW, %lu R", (unsigned long)bufsize, (unsigned long)readbufsize);
-  }
-
-  clState->padbuffer8 = NULL;
-
-  if (bufsize > 0) {
-    applog(LOG_DEBUG, "Creating read/write buffer sized %lu", (unsigned long)bufsize);
-    /* Use the max alloc value which has been rounded to a power of
-     * 2 greater >= required amount earlier */
-    if (bufsize > cgpu->max_alloc) {
-      applog(LOG_WARNING, "Maximum buffer memory device %d supports says %lu",
-           gpu, (unsigned long)(cgpu->max_alloc));
-      applog(LOG_WARNING, "Your settings come to %lu", (unsigned long)bufsize);
-    }
-
-    /* This buffer is weird and might work to some degree even if
-     * the create buffer call has apparently failed, so check if we
-     * get anything back before we call it a failure. */
-    clState->padbuffer8 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, bufsize, NULL, &status);
-    if (status != CL_SUCCESS && !clState->padbuffer8) {
-      applog(LOG_ERR, "Error %d: clCreateBuffer (padbuffer8), decrease TC or increase LG", status);
+  //[CLEANUP] -- algo specific initialization
+  if (cgpu->algorithm.init_kernel != NULL) {
+    if (unlikely((status = cgpu->algorithm.init_kernel(clState, cgpu)) != CL_SUCCESS)) {
+      applog(LOG_ERR, "Error %d: algorithm init_kernel failed.", status);
       return NULL;
     }
   }
+  //default behavior
+  else
+  {
+    /* get a kernel object handle for a kernel with the given name */
+    clState->kernel = clCreateKernel(clState->program, "search", &status);
+    if (status != CL_SUCCESS) {
+      applog(LOG_ERR, "Error %d: Creating Kernel from program. (clCreateKernel)", status);
+      return NULL;
+    }
 
-  applog(LOG_DEBUG, "Using read buffer sized %lu", (unsigned long)readbufsize);
-  clState->CLbuffer0 = clCreateBuffer(clState->context, CL_MEM_READ_ONLY, readbufsize, NULL, &status);
-  if (status != CL_SUCCESS) {
-    applog(LOG_ERR, "Error %d: clCreateBuffer (CLbuffer0)", status);
-    return NULL;
-  }
+    clState->n_extra_kernels = algorithm->n_extra_kernels;
+    if (clState->n_extra_kernels > 0) {
+      unsigned int i;
+      char kernel_name[9]; // max: search99 + 0x0
 
-  applog(LOG_DEBUG, "Using output buffer sized %lu", BUFFERSIZE);
-  clState->outputBuffer = clCreateBuffer(clState->context, CL_MEM_WRITE_ONLY, BUFFERSIZE, NULL, &status);
-  if (status != CL_SUCCESS) {
-    applog(LOG_ERR, "Error %d: clCreateBuffer (outputBuffer)", status);
-    return NULL;
+      clState->extra_kernels = (cl_kernel *)malloc(sizeof(cl_kernel) * clState->n_extra_kernels);
+
+      for (i = 0; i < clState->n_extra_kernels; i++) {
+        snprintf(kernel_name, 9, "%s%d", "search", i + 1);
+        clState->extra_kernels[i] = clCreateKernel(clState->program, kernel_name, &status);
+        if (status != CL_SUCCESS) {
+          applog(LOG_ERR, "Error %d: Creating ExtraKernel #%d from program. (clCreateKernel)", status, i);
+          return NULL;
+        }
+      }
+    }
+
+    size_t bufsize;
+    size_t readbufsize = 128;
+
+    if (algorithm->rw_buffer_size < 0) {
+      // calc buffer size for neoscrypt
+      if (!safe_cmp(algorithm->name, "neoscrypt")) {
+        /* The scratch/pad-buffer needs 32kBytes memory per thread. */
+        bufsize = NEOSCRYPT_SCRATCHBUF_SIZE * cgpu->thread_concurrency;
+
+        /* This is the input buffer. For neoscrypt this is guaranteed to be
+         * 80 bytes only. */
+        readbufsize = 80;
+
+        applog(LOG_DEBUG, "Neoscrypt buffer sizes: %lu RW, %lu R", (unsigned long)bufsize, (unsigned long)readbufsize);
+      // scrypt/n-scrypt
+      } else {
+        size_t ipt = (algorithm->n / cgpu->lookup_gap + (algorithm->n % cgpu->lookup_gap > 0));
+        bufsize = 128 * ipt * cgpu->thread_concurrency;
+        applog(LOG_DEBUG, "Scrypt buffer sizes: %lu RW, %lu R", (unsigned long)bufsize, (unsigned long)readbufsize);
+      }
+    } else {
+      bufsize = (size_t) algorithm->rw_buffer_size;
+      applog(LOG_DEBUG, "Buffer sizes: %lu RW, %lu R", (unsigned long)bufsize, (unsigned long)readbufsize);
+    }
+
+    clState->padbuffer8 = NULL;
+
+    if (bufsize > 0) {
+      applog(LOG_DEBUG, "Creating read/write buffer sized %lu", (unsigned long)bufsize);
+      /* Use the max alloc value which has been rounded to a power of
+       * 2 greater >= required amount earlier */
+      if (bufsize > cgpu->max_alloc) {
+        applog(LOG_WARNING, "Maximum buffer memory device %d supports says %lu",
+             gpu, (unsigned long)(cgpu->max_alloc));
+        applog(LOG_WARNING, "Your settings come to %lu", (unsigned long)bufsize);
+      }
+
+      /* This buffer is weird and might work to some degree even if
+       * the create buffer call has apparently failed, so check if we
+       * get anything back before we call it a failure. */
+      clState->padbuffer8 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, bufsize, NULL, &status);
+      if (status != CL_SUCCESS && !clState->padbuffer8) {
+        applog(LOG_ERR, "Error %d: clCreateBuffer (padbuffer8), decrease TC or increase LG", status);
+        return NULL;
+      }
+    }
+
+    applog(LOG_DEBUG, "Using read buffer sized %lu", (unsigned long)readbufsize);
+    clState->CLbuffer0 = clCreateBuffer(clState->context, CL_MEM_READ_ONLY, readbufsize, NULL, &status);
+    if (status != CL_SUCCESS) {
+      applog(LOG_ERR, "Error %d: clCreateBuffer (CLbuffer0)", status);
+      return NULL;
+    }
+
+    applog(LOG_DEBUG, "Using output buffer sized %lu", BUFFERSIZE);
+    clState->outputBuffer = clCreateBuffer(clState->context, CL_MEM_WRITE_ONLY, BUFFERSIZE, NULL, &status);
+    if (status != CL_SUCCESS) {
+      applog(LOG_ERR, "Error %d: clCreateBuffer (outputBuffer)", status);
+      return NULL;
+    }
   }
 
   return clState;

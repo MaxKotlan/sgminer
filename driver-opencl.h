@@ -31,4 +31,9 @@ extern int opt_platform_id;
 
 extern struct device_drv opencl_drv;
 
+extern void set_threads_hashes(unsigned int vectors, unsigned int compute_shaders, int64_t *hashes, size_t *globalThreads,
+             unsigned int minthreads, __maybe_unused int *intensity, __maybe_unused int *xintensity,
+             __maybe_unused int *rawintensity, algorithm_t *algorithm);
+
+
 #endif /* DEVICE_GPU_H */

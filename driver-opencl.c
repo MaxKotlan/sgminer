@@ -1026,7 +1026,7 @@ void manage_gpu(void)
 
 static _clState *clStates[MAX_GPUDEVICES];
 
-static void set_threads_hashes(unsigned int vectors, unsigned int compute_shaders, int64_t *hashes, size_t *globalThreads,
+void set_threads_hashes(unsigned int vectors, unsigned int compute_shaders, int64_t *hashes, size_t *globalThreads,
              unsigned int minthreads, __maybe_unused int *intensity, __maybe_unused int *xintensity,
              __maybe_unused int *rawintensity, algorithm_t *algorithm)
 {
@@ -1327,26 +1327,21 @@ static bool opencl_thread_init(struct thr_info *thr)
 
   if (!thrdata) {
     applog(LOG_ERR, "Failed to calloc in opencl_thread_init");
-    return false;
+    goto cleanupfail;
   }
 
   thrdata->queue_kernel_parameters = gpu->algorithm.queue_kernel;
   thrdata->res = (uint32_t *)calloc(buffersize, 1);
 
   if (!thrdata->res) {
-    free(thrdata);
     applog(LOG_ERR, "Failed to calloc in opencl_thread_init");
-    return false;
+    goto cleanupfail;
   }
 
   //[CLEANUP] -- blocking true?
-  status |= clEnqueueWriteBuffer(clState->commandQueue, clState->outputBuffer, false, 0,
-               buffersize, blank_res, 0, NULL, NULL);
-  if (unlikely(status != CL_SUCCESS)) {
-    free(thrdata->res);
-    free(thrdata);
-    applog(LOG_ERR, "Error: clEnqueueWriteBuffer failed.");
-    return false;
+  if (unlikely((status |= clEnqueueWriteBuffer(clState->commandQueue, clState->outputBuffer, false, 0, buffersize, blank_res, 0, NULL, NULL)) != CL_SUCCESS)) {
+    applog(LOG_ERR, "Error: clEnqueueWriteBuffer for outputBuffer failed.");
+    goto cleanupfail;
   }
 
   gpu->status = LIFE_WELL;
@@ -1354,11 +1349,23 @@ static bool opencl_thread_init(struct thr_info *thr)
   gpu->device_last_well = time(NULL);
 
   return true;
+
+cleanupfail:
+  if (thrdata->res) {
+    free(thrdata->res);
+  }
+
+  if (thrdata) {
+    free(thrdata);
+  }
+
+  return false;
 }
 
 static bool opencl_prepare_work(struct thr_info __maybe_unused *thr, struct work *work)
 {
   work->blk.work = work;
+  work->blk.cgpu = thr->cgpu;
   thr->pool_no = work->pool->pool_no;
   return true;
 }
@@ -1381,7 +1388,7 @@ static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
   int64_t hashes;
   int found = gpu->algorithm.found_idx;
   int buffersize = BUFFERSIZE;
-    unsigned int i;
+  unsigned int i;
 
   /* Windows' timer resolution is only 15ms so oversample 5x */
   if (gpu->dynamic && (++gpu->intervals * dynamic_us) > 70000) {
@@ -1401,40 +1408,43 @@ static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
     gpu->intervals = 0;
   }
 
-  set_threads_hashes(clState->vwidth, clState->compute_shaders, &hashes, globalThreads, localThreads[0],
-         &gpu->intensity, &gpu->xintensity, &gpu->rawintensity, &gpu->algorithm);
-  if (hashes > gpu->max_hashes)
+  set_threads_hashes(clState->vwidth, clState->compute_shaders, &hashes, globalThreads, localThreads[0], &gpu->intensity, &gpu->xintensity, &gpu->rawintensity, &gpu->algorithm);
+  if (hashes > gpu->max_hashes) {
     gpu->max_hashes = hashes;
-
-  status = thrdata->queue_kernel_parameters(clState, &work->blk, globalThreads[0]);
-  if (unlikely(status != CL_SUCCESS)) {
-    applog(LOG_ERR, "Error: clSetKernelArg of all params failed.");
-    return -1;
   }
 
-    if (clState->goffset)
+  //[CLEANUP]
+  if (gpu->algorithm.default_enqueue_kernel == false) {
+    if (unlikely((status = thrdata->queue_kernel_parameters(clState, &work->blk, globalThreads[0])) != CL_SUCCESS)) {
+      applog(LOG_ERR, "Error %d: queue_kernel_parameters failed.", status);
+      return -1;
+    }
+  }
+  else {
+    if (unlikely((status = thrdata->queue_kernel_parameters(clState, &work->blk, globalThreads[0])) != CL_SUCCESS)) {
+      applog(LOG_ERR, "Error: clSetKernelArg of all params failed.");
+      return -1;
+    }
+
+    if (clState->goffset) {
         p_global_work_offset = (size_t *)&work->blk.nonce;
+    }
 
-    status = clEnqueueNDRangeKernel(clState->commandQueue, clState->kernel, 1, p_global_work_offset,
-                    globalThreads, localThreads, 0,  NULL, NULL);
-  if (unlikely(status != CL_SUCCESS)) {
-    applog(LOG_ERR, "Error %d: Enqueueing kernel onto command queue. (clEnqueueNDRangeKernel)", status);
-    return -1;
-  }
+    if (unlikely((status = clEnqueueNDRangeKernel(clState->commandQueue, clState->kernel, 1, p_global_work_offset, globalThreads, localThreads, 0,  NULL, NULL)) != CL_SUCCESS)) {
+      applog(LOG_ERR, "Error %d: Enqueueing kernel onto command queue. (clEnqueueNDRangeKernel)", status);
+      return -1;
+    }
 
-  for (i = 0; i < clState->n_extra_kernels; i++) {
-      status = clEnqueueNDRangeKernel(clState->commandQueue, clState->extra_kernels[i], 1, p_global_work_offset,
-                      globalThreads, localThreads, 0,  NULL, NULL);
-      if (unlikely(status != CL_SUCCESS)) {
-          applog(LOG_ERR, "Error %d: Enqueueing kernel onto command queue. (clEnqueueNDRangeKernel)", status);
-          return -1;
-      }
+    for (i = 0; i < clState->n_extra_kernels; i++) {
+        if (unlikely((status = clEnqueueNDRangeKernel(clState->commandQueue, clState->extra_kernels[i], 1, p_global_work_offset, globalThreads, localThreads, 0,  NULL, NULL)) != CL_SUCCESS)) {
+            applog(LOG_ERR, "Error %d: Enqueueing kernel onto command queue. (clEnqueueNDRangeKernel)", status);
+            return -1;
+        }
+    }
   }
 
   //[CLEANUP] -- block true? - ends the command queue no need for clFinish later
-  status = clEnqueueReadBuffer(clState->commandQueue, clState->outputBuffer, true, 0,
-             buffersize, thrdata->res, 0, NULL, NULL);
-  if (unlikely(status != CL_SUCCESS)) {
+  if (unlikely((status = clEnqueueReadBuffer(clState->commandQueue, clState->outputBuffer, true, 0, buffersize, thrdata->res, 0, NULL, NULL)) != CL_SUCCESS)) {
     applog(LOG_ERR, "Error: clEnqueueReadBuffer failed error %d. (clEnqueueReadBuffer)", status);
     return -1;
   }
@@ -1450,15 +1460,15 @@ static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
   /* found entry is used as a counter to say how many nonces exist */
   if (thrdata->res[found]) {
     /* Clear the buffer again */
-    status = clEnqueueWriteBuffer(clState->commandQueue, clState->outputBuffer, false, 0,
-                buffersize, blank_res, 0, NULL, NULL);
-    if (unlikely(status != CL_SUCCESS)) {
+    if (unlikely((status = clEnqueueWriteBuffer(clState->commandQueue, clState->outputBuffer, true, 0, buffersize, blank_res, 0, NULL, NULL)) != CL_SUCCESS)) {
       applog(LOG_ERR, "Error: clEnqueueWriteBuffer failed.");
       return -1;
     }
+
     applog(LOG_DEBUG, "GPU %d found something?", gpu->device_id);
     postcalc_hash_async(thr, work, thrdata->res);
     memset(thrdata->res, 0, buffersize);
+
     /* This finish flushes the writebuffer set with CL_FALSE in clEnqueueWriteBuffer */
     //clFinish(clState->commandQueue);
   }
@@ -1477,20 +1487,30 @@ static void opencl_thread_shutdown(struct thr_info *thr)
 
   if (clState) {
     clFinish(clState->commandQueue);
-    clReleaseMemObject(clState->outputBuffer);
-    clReleaseMemObject(clState->CLbuffer0);
-    if (clState->padbuffer8)
-      clReleaseMemObject(clState->padbuffer8);
-    clReleaseKernel(clState->kernel);
-        for (i = 0; i < clState->n_extra_kernels; i++)
-            clReleaseKernel(clState->extra_kernels[i]);
+
+    //custom algorithm cleanup function
+    if (thr->cgpu->algorithm.thread_cleanup) {
+      thr->cgpu->algorithm.thread_cleanup(clState);
+    }
+    //default
+    else {
+      clReleaseMemObject(clState->outputBuffer);
+      clReleaseMemObject(clState->CLbuffer0);
+      if (clState->padbuffer8)
+        clReleaseMemObject(clState->padbuffer8);
+      clReleaseKernel(clState->kernel);
+      for (i = 0; i < clState->n_extra_kernels; i++)
+        clReleaseKernel(clState->extra_kernels[i]);
+      if (clState->extra_kernels)
+        free(clState->extra_kernels);
+    }
+
     clReleaseProgram(clState->program);
     clReleaseCommandQueue(clState->commandQueue);
     clReleaseContext(clState->context);
-    if (clState->extra_kernels)
-      free(clState->extra_kernels);
     free(clState);
   }
+
   free(((struct opencl_thread_data *)thr->cgpu_data)->res);
   free(thr->cgpu_data);
   thr->cgpu_data = NULL;

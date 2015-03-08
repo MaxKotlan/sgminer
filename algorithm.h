@@ -59,8 +59,11 @@ typedef struct _algorithm_t {
   size_t n_extra_kernels;
   long rw_buffer_size;
   cl_command_queue_properties cq_properties;
+  bool     default_enqueue_kernel;
   void     (*regenhash)(struct work *);
+  cl_int   (*init_kernel)(struct __clState *, struct cgpu_info *);
   cl_int   (*queue_kernel)(struct __clState *, struct _dev_blk_ctx *, cl_uint);
+  void     (*thread_cleanup)(struct __clState *);
   void     (*gen_hash)(const unsigned char *, unsigned int, unsigned char *);
   void     (*set_compile_options)(struct _build_kernel_data *, struct cgpu_info *, struct _algorithm_t *);
 } algorithm_t;
