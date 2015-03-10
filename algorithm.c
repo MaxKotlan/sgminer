@@ -789,7 +789,7 @@ static const char *lookup_algorithm_alias(const char *lookup_alias, uint8_t *nfa
   ALGO_ALIAS("nist5", "talkcoin-mod");
   ALGO_ALIAS("keccak", "maxcoin");
   ALGO_ALIAS("whirlpool", "whirlcoin");
-  ALGO_ALIAS("ziftrcoin", "zr5");
+  ALGO_ALIAS("zr5", "ziftrcoin");
 
   #undef ALGO_ALIAS
   #undef ALGO_ALIAS_NF
