@@ -1,4 +1,4 @@
-/*-
+/*
  * Copyright 2015 ziftrCOIN, LLC
  * All rights reserved.
  *
@@ -200,12 +200,21 @@ void zr5_regenhash(struct work *work)
 {
   uint32_t data[20];
   uint32_t res[8];
-  uint32_t *nonce = (uint32_t *)(work->data + 76);
   uint32_t *ohash = (uint32_t *)(work->hash);
-
+  uint32_t *nonce = (uint32_t *)(work->data + 76);
   uint32_t n = *nonce;
-  memcpy(data, work->data, 76);
 
+  if (work->stratum) {
+    flip80(data, work->data);
+  }
+  else {
+    memcpy(data, work->data, 76);
+  }
+
+  applog(LOG_DEBUG, "regenhash data: %s", bin2hex((unsigned char *)data, 80));
+  applog(LOG_DEBUG, "regenhash nonce: %08lx (%lu)", n, n);
+
+  *((uint32_t *)data) &= (~ZR5_POK_DATA_MASK);
   uint32_t version = data[0];
   data[19] = n;
 
@@ -214,9 +223,12 @@ void zr5_regenhash(struct work *work)
 
   //apply PoK to header
   data[0] = version | (res[0] & ZR5_POK_DATA_MASK);
+  data[19] = n;
 
   //apply PoK to work->data header also so it's included in return hash -- probably should be done elsewhere...
-  *((uint32_t *)work->data) = data[0];
+  if(!work->stratum) {
+    *((uint32_t *)work->data) = data[0];
+  }
 
   //final hash
   zr5_hash(ohash, data);
@@ -412,8 +424,6 @@ cl_int queue_zr5_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __m
   cl_int status = 0;
   unsigned short i;
   unsigned char data[80];
-  cl_ulong *keccak_state;
-  size_t keccak_size;
   size_t globalThreads[1];
   size_t localThreads[1] = { clState->wsize };
   size_t *p_global_work_offset = NULL;
@@ -426,6 +436,7 @@ cl_int queue_zr5_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __m
   //set global thread count
   globalThreads[0] = threads;
 
+  //set hash target
   le_target = ((uint64_t *)blk->work->target)[3];
 
   //getwork sends the data in the correct order already... stratum sends in reverse
@@ -436,45 +447,42 @@ cl_int queue_zr5_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __m
     memcpy(data, blk->work->data, 80);
   }
 
-  applog(LOG_DEBUG, "1");
+//  applog(LOG_DEBUG, "data: %s", bin2hex(data, 80));
 
-//setup default keccak state buffer
-/*
-  keccak_size = threads * 200; //glob threads * 200 bytes
-  if (unlikely((keccak_state = (cl_ulong *)malloc(keccak_size)) == NULL)) {
-    quit(1, "Malloc Failed on keccak_state");
-  }
-*/
-  struct cgpu_info *cgpu = blk->cgpu;
+  //setup default keccak state buffer
   size_t keccak_offset = blk->nonce * 200;  //offset of buffer area we are working with
-  keccak_size = cgpu->max_hashes * 200; //work items * 200 bytes
+  size_t tmp_size = threads * 200;          //keccak state buffer size needed
 
-  //__debug("", "offset = %lu, size = %lu", keccak_offset, keccak_size);
-
-  if (unlikely((keccak_state = (cl_ulong *)malloc(keccak_size)) == NULL)) {
-    quit(1, "Malloc Failed on keccak_state");
+  //if exists but not the correct size needed, free the buffer and recreate
+  if(clState->keccak_state != NULL && clState->keccak_size != tmp_size) {
+    free(clState->keccak_state);
+    clState->keccak_size = 0;
+    clState->keccak_state = NULL;
   }
 
-  applog(LOG_DEBUG, "2");
+  //if buffer doesn't exist create it
+  if (clState->keccak_state == NULL) {
+    clState->keccak_size = tmp_size; //glob threads * 200 bytes
+    if (unlikely((clState->keccak_state = (cl_ulong *)malloc(tmp_size)) == NULL)) {
+      quit(1, "Malloc Failed on keccak_state. Tried to allocate %lu bytes", tmp_size);
+    }
+  }
 
-  memset(keccak_state, 0, keccak_size);
+  //zero out the keccak state buffer
+  memset(clState->keccak_state, 0, tmp_size);
 
   //copy input data into the first 72 bytes of each work item state buffer
   uint64_t idx;
   for (idx=0;idx<threads;++idx) {
-    memcpy((((unsigned char *)keccak_state)+(idx * 200)), data, 72);
+    memcpy((((unsigned char *)clState->keccak_state)+(idx * 200)), data, 72);
   }
-
-  applog(LOG_DEBUG, "3");
 
   for (i=0;i<2;++i) {
     //push default keccak state
-    if (unlikely((status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, keccak_size, keccak_state, 0, NULL, NULL)) != CL_SUCCESS)) {
+    if (unlikely((status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, false, 0, clState->keccak_size, clState->keccak_state, 0, NULL, NULL)) != CL_SUCCESS)) {
       applog(LOG_ERR, "Error %d: clEnqueueWriteBuffer(CLbuffer0) failed.", status);
       goto out;
     }
-
-    applog(LOG_DEBUG, "4");
 
     //run prep1 only on 2nd zr5 pass...
     if (i == 1) {
@@ -537,8 +545,6 @@ cl_int queue_zr5_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __m
       goto out;
     }
 
-    applog(LOG_DEBUG, "5");
-
     //run other algos
     unsigned short pass;
     for(pass=0;pass<4;++pass) {
@@ -556,19 +562,10 @@ cl_int queue_zr5_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __m
           goto out;
         }
 
-        applog(LOG_DEBUG, "6");
-
         ++kernel;
       }
     }
-
-    //flush command queue before we start over
-    /*if(i == 0) {
-      clFlush(clState->commandQueue);
-    }*/
   }
-
-  //applog(LOG_DEBUG, "7");
 
   //ZR5 final
   kernel = &(KERNEL_ZR5_FINAL);
@@ -583,20 +580,17 @@ cl_int queue_zr5_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __m
     goto out;
   }
 
-  applog(LOG_DEBUG, "8");
-
 out:
-  if (keccak_state) {
-    free(keccak_state);
-  }
-
-  applog(LOG_DEBUG, "9");
-
   return status;
 }
 
 void zr5_cleanup(struct __clState *clState)
 {
+  if(clState->keccak_state) {
+    free(clState->keccak_state);
+  }
+  clState->keccak_size = 0;
+
   if(clState->outputBuffer) {
     clReleaseMemObject(clState->outputBuffer);
   }

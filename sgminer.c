@@ -5573,7 +5573,7 @@ static void *stratum_sthread(void *userdata)
     applog(LOG_DEBUG, "stratum_sthread() algorithm = %s", pool->algorithm.name);
 
     // Neoscrypt is little endian
-    if (!safe_cmp(pool->algorithm.name, "neoscrypt")) {
+    if ((!safe_cmp(pool->algorithm.name, "neoscrypt")) || (!safe_cmp(pool->algorithm.name, "zr5"))) {
       nonce = htobe32(*((uint32_t *)(work->data + 76)));
       //*((uint32_t *)nonce2) = htole32(work->nonce2);
     }
