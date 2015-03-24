@@ -329,7 +329,11 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
     clState->wsize = cgpu->work_size;
   else
     clState->wsize = 256;
-
+  
+  // The code hates worksizes other than 64, and the bins
+  // aren't build for it, so force it.
+  if(!safe_cmp(cgpu->algorithm.name, "zr5")) clState->wsize = 64;
+	
   if (!cgpu->opt_lg) {
     applog(LOG_DEBUG, "GPU %d: selecting lookup gap of 2", gpu);
     cgpu->lookup_gap = 2;
@@ -469,13 +473,34 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
 
   build_data->opencl_version = get_opencl_version(devices[gpu]);
   build_data->patch_bfi = needs_bfi_patch(build_data);
-
-  strcpy(build_data->binary_filename, (!empty_string(cgpu->algorithm.kernelfile)?cgpu->algorithm.kernelfile:cgpu->algorithm.name));
+  
+  // Fix the name so it finds the generated binaries for ZR5; it needs
+  // to be "WolfZR5" plus a dash in between that and the chip name, then
+  // the string ".bin"
+  if(safe_cmp(cgpu->algorithm.name, "zr5"))
+	strcpy(build_data->binary_filename, (!empty_string(cgpu->algorithm.kernelfile)?cgpu->algorithm.kernelfile:cgpu->algorithm.name));
+  else
+	strcpy(build_data->binary_filename, "WolfZR5-");
+   
   strcat(build_data->binary_filename, name);
-  if (clState->goffset)
+  
+  // If it's not ZR5, name as normal, if it is, just have the CL
+  // source file name (minus the .cl portion), the chip name,
+  // and ".bin".
+  if (clState->goffset && safe_cmp(cgpu->algorithm.name, "zr5"))
     strcat(build_data->binary_filename, "g");
 
+  // The function set_base_compiler_options() shouldn't be modifying
+  // the binary filename, and it gets in my way, so I removed that
+  // part and put it after.
   set_base_compiler_options(build_data);
+  
+  if(safe_cmp(cgpu->algorithm.name, "zr5"))
+  {
+	sprintf(strbuf, "w%dl%d", (int)build_data->work_size, (int)sizeof(long));
+	strcat(build_data->binary_filename, strbuf);
+  }
+  
   if (algorithm->set_compile_options)
     algorithm->set_compile_options(build_data, cgpu, algorithm);
 

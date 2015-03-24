@@ -57,9 +57,6 @@ void set_base_compiler_options(build_kernel_data *data)
       data->sgminer_path, data->sgminer_path, (int)data->work_size);
   applog(LOG_DEBUG, "Setting worksize to %d", (int)(data->work_size));
 
-  sprintf(buf, "w%dl%d", (int)data->work_size, (int)sizeof(long));
-  strcat(data->binary_filename, buf);
-
   if (data->has_bit_align) {
     strcat(data->compiler_options, " -D BITALIGN");
     applog(LOG_DEBUG, "cl_amd_media_ops found, setting BITALIGN");

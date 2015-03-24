@@ -5,6 +5,8 @@ minerd.exe
 *.o
 *.lo
 *.bin
+*.cl
+*.conf
 
 autom4te.cache
 .deps

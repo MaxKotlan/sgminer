@@ -33,8 +33,6 @@ typedef struct __clState {
   cl_mem padbuffer8;
   cl_mem flagsbuffer;
   unsigned char cldata[80];
-  cl_ulong *keccak_state;
-  size_t keccak_size;
   bool hasBitAlign;
   bool goffset;
   cl_uint vwidth;
