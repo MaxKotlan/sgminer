@@ -433,7 +433,7 @@ cl_int queue_zr5_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __m
 		clSetKernelArg(KERNEL_KECCAK, 3, sizeof(cl_ushort), &ZR5Round);
 		clSetKernelArg(KERNEL_KECCAK, 4, sizeof(cl_uint), &CompilerBugFix);
 		
-		cl_event KeccakComplete = clCreateUserEvent(clState->context, NULL);
+		cl_event KeccakComplete;
 		
 		status = clEnqueueNDRangeKernel(clState->commandQueue, clState->extra_kernels[0], 1, p_global_work_offset, (size_t *)&threads, &clState->wsize, 0, NULL, &KeccakComplete);
 		
@@ -451,8 +451,6 @@ cl_int queue_zr5_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __m
 		// Run all other algos - ones that aren't needed are no-op kernels
 		for(cl_ushort pass = 0; pass < 4; ++pass)
 		{
-			for(int x = 0; x < 4; ++x) AuxAlgosComplete[x] = clCreateUserEvent(clState->context, NULL);
-			
 			for(int x = 0; x < 4; ++x)
 			{
 				clSetKernelArg(clState->extra_kernels[x + 1], 0, sizeof(cl_mem), &clState->padbuffer8);
