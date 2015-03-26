@@ -303,9 +303,7 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
   strcpy(filename, strbuf);
 
   applog(LOG_DEBUG, "Using source file %s", filename);
-  
-  if(!strcmp(name, "AMD Radeon R9 M290X Compute Engine")) strcpy(name, "Pitcairn");
-  
+
   /* For some reason 2 vectors is still better even if the card says
    * otherwise, and many cards lie about their max so use 256 as max
    * unless explicitly set on the command line. Tahiti prefers 1 */
