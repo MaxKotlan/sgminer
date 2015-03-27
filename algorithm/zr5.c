@@ -43,6 +43,7 @@
 #include "zr5.h"
 #include "findnonce.h"
 #include "util.h"
+#include "driver-opencl.h"
 
 //ziftr coin order
 const int zr5_order[][4] =
@@ -262,13 +263,13 @@ bool scanhash_zr5(struct thr_info *thr, const unsigned char __maybe_unused *pmid
     if (unlikely(tmp_hash7 <= Htarg)) {
       //((uint32_t *)pdata)[19] = htobe32(n);
       //*nonce = n;
-      printf("%08lx: %08lx <= %08lx\n", n, tmp_hash7, Htarg);
+      printf("%08ux: %08ux <= %08ux\n", n, tmp_hash7, Htarg);
       *last_nonce = n;
       ret = true;
       break;
     }
     else if (unlikely((n >= max_nonce) || thr->work_restart)) {
-      printf("%08lx: >= %08lx\n", n, max_nonce);
+      printf("%08ux: >= %08ux\n", n, max_nonce);
       *last_nonce = n;
       break;
     }
@@ -297,22 +298,22 @@ cl_int init_zr5_kernel(struct __clState *clState, struct cgpu_info *cgpu)
 	int64_t hashes;
 	clState->kernel = NULL;
 	size_t globalThreads, localThreads = clState->wsize;
-	
+
 	// Allocate space for kernels
 	clState->n_extra_kernels = cgpu->algorithm.n_extra_kernels;
 	clState->extra_kernels = (cl_kernel *)malloc(sizeof(cl_kernel) * clState->n_extra_kernels);
 	if(!clState->extra_kernels) quit(1, "Failed to allocate memory for kernel handles.");
-	
+
 	// Create kernel handles and store in new buffer
 	KERNEL_KECCAK = clCreateKernel(clState->program, "ZR5_Keccak", &status);
-	
+
 	if(unlikely(status != CL_SUCCESS))
 	{
 		applog(LOG_ERR, "Error %d: clCreateKernel(KERNEL_KECCAK) failed.", status);
 		zr5_cleanup(clState);
 		return status;
 	}
-	
+
 	KERNEL_BLAKE = clCreateKernel(clState->program, "zr5_blake", &status);
 	if(unlikely(status != CL_SUCCESS))
 	{
@@ -320,7 +321,7 @@ cl_int init_zr5_kernel(struct __clState *clState, struct cgpu_info *cgpu)
 		zr5_cleanup(clState);
 		return status;
 	}
-	
+
 	KERNEL_GROESTL = clCreateKernel(clState->program, "zr5_groestl", &status);
 	if(unlikely(status != CL_SUCCESS))
 	{
@@ -328,7 +329,7 @@ cl_int init_zr5_kernel(struct __clState *clState, struct cgpu_info *cgpu)
 		zr5_cleanup(clState);
 		return status;
 	}
-	
+
 	KERNEL_JH = clCreateKernel(clState->program, "zr5_jh", &status);
 	if(unlikely(status != CL_SUCCESS))
 	{
@@ -336,7 +337,7 @@ cl_int init_zr5_kernel(struct __clState *clState, struct cgpu_info *cgpu)
 		zr5_cleanup(clState);
 		return status;
 	}
-	
+
 	KERNEL_SKEIN = clCreateKernel(clState->program, "zr5_skein", &status);
 	if(unlikely(status != CL_SUCCESS))
 	{
@@ -344,7 +345,7 @@ cl_int init_zr5_kernel(struct __clState *clState, struct cgpu_info *cgpu)
 		zr5_cleanup(clState);
 		return status;
 	}
-	
+
 	KERNEL_ZR5_FINAL = clCreateKernel(clState->program, "zr5_final", &status);
 	if(unlikely(status != CL_SUCCESS))
 	{
@@ -352,20 +353,20 @@ cl_int init_zr5_kernel(struct __clState *clState, struct cgpu_info *cgpu)
 		zr5_cleanup(clState);
 		return status;
 	}
-	
+
 	// Calculate raw number of threads using algorithm, intensity options, and card info
 	set_threads_hashes(clState->vwidth, clState->compute_shaders, &hashes, &globalThreads, localThreads, &cgpu->intensity, &cgpu->xintensity, &cgpu->rawintensity, &cgpu->algorithm);
-	
+
 	// Allocate input buffer, hash state buffer, flags buffer, and output buffer
 	clState->CLbuffer0 = clCreateBuffer(clState->context, CL_MEM_READ_ONLY, 80, NULL, &status);
-	
+
 	if(unlikely(status != CL_SUCCESS))
 	{
 		applog(LOG_ERR, "Error %d: clCreateBuffer (CLbuffer0) failed.", status);
 		zr5_cleanup(clState);
 		return status;
 	}
-	
+
 	// Hash state buffer size - one hash per work item, so 64 bytes * threads
 	clState->padbuffer8 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, globalThreads << 6, NULL, &status);
 	if(unlikely(status != CL_SUCCESS && !clState->padbuffer8))
@@ -374,7 +375,7 @@ cl_int init_zr5_kernel(struct __clState *clState, struct cgpu_info *cgpu)
 		zr5_cleanup(clState);
 		return status;
 	}
-	
+
 	// flags buffer size - one is needed for every hash as well, so 2 bytes * threads
 	clState->flagsbuffer = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, globalThreads << 1, NULL, &status);
 	if(unlikely(status != CL_SUCCESS && !clState->padbuffer8))
@@ -383,7 +384,7 @@ cl_int init_zr5_kernel(struct __clState *clState, struct cgpu_info *cgpu)
 		zr5_cleanup(clState);
 		return status;
 	}
-	
+
 	// The usual output buffer
 	clState->outputBuffer = clCreateBuffer(clState->context, CL_MEM_WRITE_ONLY, BUFFERSIZE, NULL, &status);
 	if(status != CL_SUCCESS)
@@ -392,7 +393,7 @@ cl_int init_zr5_kernel(struct __clState *clState, struct cgpu_info *cgpu)
 		zr5_cleanup(clState);
 		return status;
 	}
-	
+
 	return CL_SUCCESS;
 }
 
@@ -401,53 +402,53 @@ cl_int queue_zr5_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __m
 {
 	cl_ulong le_target = ((uint64_t *)blk->work->target)[3];
 	size_t *p_global_work_offset = NULL;
-	cl_ulong keccak_state[9];
+	cl_ulong keccak_state[10];
 	unsigned char data[80];
 	cl_int status;
-	
+
 	// Global work offset apparently may or may not be needed
 	if(clState->goffset) p_global_work_offset = (size_t *)&blk->nonce;
 
 	// Stupid stratum fucks the endianness
 	if(blk->work->stratum) flip80(data, blk->work->data);
 	else memcpy(data, blk->work->data, 80);
-	
+
 	memcpy(keccak_state, data, 80);
-	
+
 	status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, false, 0, 80, keccak_state, 0, NULL, NULL);
-	
+
 	if(status != CL_SUCCESS)
 	{
 		applog(LOG_ERR, "Error %d: clEnqueueWriteBuffer(CLbuffer0) failed.", status);
 		return status;
 	}
-	
+
 	for(cl_ushort ZR5Round = 0; ZR5Round < 2; ++ZR5Round)
 	{
 		cl_uint CompilerBugFix = 1;
-		
+
 		// Keccak is always first
 		clSetKernelArg(KERNEL_KECCAK, 0, sizeof(cl_mem), &clState->CLbuffer0);
 		clSetKernelArg(KERNEL_KECCAK, 1, sizeof(cl_mem), &clState->padbuffer8);
 		clSetKernelArg(KERNEL_KECCAK, 2, sizeof(cl_mem), &clState->flagsbuffer);
 		clSetKernelArg(KERNEL_KECCAK, 3, sizeof(cl_ushort), &ZR5Round);
 		clSetKernelArg(KERNEL_KECCAK, 4, sizeof(cl_uint), &CompilerBugFix);
-		
+
 		cl_event KeccakComplete;
-		
+
 		status = clEnqueueNDRangeKernel(clState->commandQueue, clState->extra_kernels[0], 1, p_global_work_offset, (size_t *)&threads, &clState->wsize, 0, NULL, &KeccakComplete);
-		
+
 		if(status != CL_SUCCESS)
 		{
 			applog(LOG_ERR, "Error %d while enqueuing Keccak kernel for ZR5 round %d.", status, ZR5Round);
 			return status;
 		}
-		
+
 		clWaitForEvents(1, &KeccakComplete);
 		clReleaseEvent(KeccakComplete);
-		
+
 		cl_event AuxAlgosComplete[4];
-		
+
 		// Run all other algos - ones that aren't needed are no-op kernels
 		for(cl_ushort pass = 0; pass < 4; ++pass)
 		{
@@ -458,33 +459,33 @@ cl_int queue_zr5_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __m
 				clSetKernelArg(clState->extra_kernels[x + 1], 2, sizeof(cl_ushort), &pass);
 
 				status = clEnqueueNDRangeKernel(clState->commandQueue, clState->extra_kernels[x + 1], 1, p_global_work_offset, (size_t *)&threads, &clState->wsize, 0, NULL, AuxAlgosComplete + x);
-				
+
 				if(status != CL_SUCCESS)
 				{
 					applog(LOG_ERR, "Error %d: clEnqueueNDRangeKernel(pass = %d, algo = %d) failed.", status, pass, x);
 					return status;
 				}
 			}
-			
+
 			clWaitForEvents(4, AuxAlgosComplete);
-			
+
 			for(int x = 0; x < 4; ++x) clReleaseEvent(AuxAlgosComplete[x]);
 		}
 	}
-	
+
 	// Now check all the results for winners with the final kernel
 	clSetKernelArg(KERNEL_ZR5_FINAL, 0, sizeof(cl_mem), &clState->padbuffer8);
 	clSetKernelArg(KERNEL_ZR5_FINAL, 1, sizeof(cl_mem), &clState->outputBuffer);
 	clSetKernelArg(KERNEL_ZR5_FINAL, 2, sizeof(cl_ulong), &le_target);
-	
+
 	status = clEnqueueNDRangeKernel(clState->commandQueue, KERNEL_ZR5_FINAL, 1, p_global_work_offset, (size_t *)&threads, &clState->wsize, 0,  NULL, NULL);
-	
+
 	if(status != CL_SUCCESS)
 	{
 		applog(LOG_ERR, "Error %d: clEnqueueNDRangeKernel(KERNEL_KECCAK_FINAL) failed.", status);
 		return status;
 	}
-	
+
 	return CL_SUCCESS;
 }
 
